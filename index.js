@@ -1128,11 +1128,3 @@ startBot().catch((err) => {
   log('ERROR', `Fatal: ${err.message}`);
   process.exit(1);
 });
-ped by Anoop Dubey 🚀      ║
-╚══════════════════════════════════════╝
-`);
-
-startBot().catch((err) => {
-  log('ERROR', `Fatal: ${err.message}`);
-  process.exit(1);
-});
