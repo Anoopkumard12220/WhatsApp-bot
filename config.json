@@ -2,9 +2,11 @@
   "botName": "AnoopBot",
   "version": "1.0.0",
   "prefix": ".",
-  "ownerNumber": "2250173012507",
+
+  "ownerNumber": "225173012507",
   "ownerName": "Anoop Dubey",
-  "phoneNumber": "2250173012507",
+
+  "phoneNumber": "225173012507",
 
   "groqApiKey": "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",
   "groqModel": "llama3-8b-8192",
