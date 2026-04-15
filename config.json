@@ -3,10 +3,10 @@
   "version": "1.0.0",
   "prefix": ".",
 
-  "ownerNumber": "225173012507",
+  "ownerNumber": "22573012507",
   "ownerName": "Anoop Dubey",
 
-  "phoneNumber": "225173012507",
+  "phoneNumber": "22573012507",
 
   "groqApiKey": "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",
   "groqModel": "llama3-8b-8192",
@@ -20,4 +20,5 @@
   "rateWindowMs": 60000,
   "maxRepeat": 20,
   "repeatDelayMs": 1500
+}
 }
