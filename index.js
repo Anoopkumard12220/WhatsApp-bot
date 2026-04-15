@@ -82,6 +82,7 @@ function isRateLimited(jid) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function isOwner(jid) {
+  // flexible match
   const num = jid.replace(/[^0-9]/g, '');
   return config.ownerNumber === num || config.ownerNumber === jid.split('@')[0];
 }
