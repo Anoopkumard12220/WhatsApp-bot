@@ -7,7 +7,13 @@
 
 'use strict';
 
-const crypto = require("crypto");
+// Crypto: use built-in global (Node 18+) or require fallback
+let crypto;
+try {
+  crypto = require("crypto");
+} catch {
+  crypto = globalThis.crypto;
+}
 
 const {
   default: makeWASocket,
