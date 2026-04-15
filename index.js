@@ -1042,7 +1042,7 @@ async function startBot() {
   const sock = makeWASocket({
     version,
     auth: state,
-    printQRInTerminal: true,
+    printQRInTerminal: false,
     browser: [config.botName || 'AnoopBot', 'Chrome', '1.0.0'],
     syncFullHistory: false,
     logger: {
@@ -1064,7 +1064,12 @@ async function startBot() {
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
-      log('INFO', 'QR code generated. Scan with WhatsApp!');
+      const qrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=' + encodeURIComponent(qr);
+      log('INFO', '╔══════════════════════════════════════╗');
+      log('INFO', '║  📱 SCAN QR CODE TO LOGIN           ║');
+      log('INFO', '║  Open this URL in your browser:     ║');
+      log('INFO', '╚══════════════════════════════════════╝');
+      log('INFO', 'QR IMAGE URL: ' + qrUrl);
     }
 
     if (connection === 'close') {
