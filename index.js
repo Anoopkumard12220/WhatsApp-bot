@@ -1409,7 +1409,7 @@ startBot().catch((err) => {
   log('ERROR', `Fatal: ${err.message}`);
   process.exit(1);
 });
-��─────────
+
 //  GLOBAL ERROR HANDLERS
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -1429,5 +1429,8 @@ console.log(`
 
 startBot().catch((err) => {
   log('ERROR', `Fatal: ${err.message}`);
+  process.exit(1);
+});
+e}`);
   process.exit(1);
 });
