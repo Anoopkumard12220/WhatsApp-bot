@@ -1,0 +1,20 @@
+{
+  "botName": "AnoopBot",
+  "version": "1.0.0",
+  "prefix": ".",
+  "ownerNumber": "919120560734",
+  "ownerName": "Anoop Dubey",
+
+  "groqApiKey": "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",
+  "groqModel": "llama3-8b-8192",
+
+  "weatherApiKey": "your_openweathermap_api_key",
+  "newsApiKey": "your_newsapi_key",
+  "nasaApiKey": "DEMO_KEY",
+
+  "cooldownMs": 3000,
+  "rateLimit": 10,
+  "rateWindowMs": 60000,
+  "maxRepeat": 20,
+  "repeatDelayMs": 1500
+}
