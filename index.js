@@ -982,7 +982,7 @@ function formatUptime(seconds) {
 async function handleMessage(sock, msg) {
   try {
     if (!msg.message) return;
-    if (msg.key.fromMe) return;
+    // fromMe = owner sending from their own phone, always allow
 
     const text = getMsgText(msg).trim();
     if (!text.startsWith(config.prefix || '.')) return;
