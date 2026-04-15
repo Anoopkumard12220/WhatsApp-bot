@@ -1232,7 +1232,7 @@ async function startBot() {
   const sock = makeWASocket({
     version,
     auth: state,
-    printQRInTerminal: false,
+    printQRInTerminal: true,
     browser: [config.botName || 'AnoopBot', 'Chrome', '1.0.0'],
     syncFullHistory: false,
     logger: {
@@ -1248,30 +1248,6 @@ async function startBot() {
     },
   });
 
-  // ── Auto pairing code on first run (no stdin, reads from config) ──────────
-  if (!sock.authState.creds.registered) {
-    const phoneNumber = (config.phoneNumber || config.ownerNumber || '').replace(/[^0-9]/g, '');
-    if (!phoneNumber) {
-      log('ERROR', 'No phoneNumber found in config.json! Add "phoneNumber": "91XXXXXXXXXX" to config.json');
-      process.exit(1);
-    }
-
-    // Small delay to let the socket fully init before requesting pairing
-    await sleep(3000);
-
-    try {
-      const code = await sock.requestPairingCode(phoneNumber);
-      console.log(`\n╔══════════════════════════════════════╗`);
-      console.log(`║        🔑 PAIRING CODE BELOW         ║`);
-      console.log(`╠══════════════════════════════════════╣`);
-      console.log(`║           ${code}            ║`);
-      console.log(`╚══════════════════════════════════════╝`);
-      console.log(`\n➡️  Open WhatsApp → Linked Devices → Link a Device`);
-      console.log(`➡️  Enter the code above when prompted\n`);
-    } catch (err) {
-      log('ERROR', `Failed to get pairing code: ${err.message}`);
-    }
-  }
 
   sock.ev.on('creds.update', saveCreds);
 
@@ -1319,6 +1295,28 @@ async function startBot() {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+//  GLOBAL ERROR HANDLERS
+// ────────────────────────────────────────────────────────────────────────────
+
+process.on('uncaughtException', (err) => log('ERROR', `Uncaught: ${err.message}`));
+process.on('unhandledRejection', (err) => log('ERROR', `Unhandled Rejection: ${err}`));
+
+// ────────────────────────────────────────────────────────────────────────────
+//  LAUNCH
+// ────────────────────────────────────────────────────────────────────────────
+
+console.log(`
+╔══════════════════════════════════════╗
+║       WhatsApp Bot Starting...       ║
+║     Developed by Anoop Dubey 🚀      ║
+╚══════════════════════════════════════╝
+`);
+
+startBot().catch((err) => {
+  log('ERROR', `Fatal: ${err.message}`);
+  process.exit(1);
+});
+��─────────
 //  GLOBAL ERROR HANDLERS
 // ────────────────────────────────────────────────────────────────────────────
 
