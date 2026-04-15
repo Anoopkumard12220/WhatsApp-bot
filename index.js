@@ -996,13 +996,6 @@ async function handleMessage(sock, msg) {
 
     log('INFO', `[MSG] ${sender} → .${command}`);
 
-    // Owner check
-    if (!isOwner(sender)) {
-      return sock.sendMessage(jid, {
-        text: `🚫 *Access Denied*\n\nThis bot is private.\n_Only the owner can use this bot._\n\n_Developed by Anoop Dubey 🚀_`,
-      }, { quoted: msg });
-    }
-
     // Rate limit
     if (isRateLimited(sender)) {
       return reply(sock, msg, `⏱️ You're sending too many commands. Please slow down.\n\n_Developed by Anoop Dubey 🚀_`);
@@ -1128,6 +1121,14 @@ console.log(`
 ╔══════════════════════════════════════╗
 ║       WhatsApp Bot Starting...       ║
 ║     Developed by Anoop Dubey 🚀      ║
+╚══════════════════════════════════════╝
+`);
+
+startBot().catch((err) => {
+  log('ERROR', `Fatal: ${err.message}`);
+  process.exit(1);
+});
+ped by Anoop Dubey 🚀      ║
 ╚══════════════════════════════════════╝
 `);
 
