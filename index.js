@@ -7,13 +7,12 @@
 
 'use strict';
 
-// Crypto: use built-in global (Node 18+) or require fallback
-let crypto;
-try {
-  crypto = require("crypto");
-} catch {
-  crypto = globalThis.crypto;
-}
+// ─── Crypto global polyfill (MUST be before all other requires) ───────────
+// Railway Node.js envs don't always expose crypto as a global.
+// Baileys internally uses crypto.*, so patch global FIRST.
+const crypto = require("crypto");
+if (!globalThis.crypto) globalThis.crypto = crypto;
+if (!global.crypto) global.crypto = crypto;
 
 const {
   default: makeWASocket,
