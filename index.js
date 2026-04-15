@@ -12,7 +12,6 @@ const {
   useMultiFileAuthState,
   DisconnectReason,
   fetchLatestBaileysVersion,
-  makeInMemoryStore,
   jidDecode,
   proto,
   getContentType,
@@ -20,7 +19,6 @@ const {
 
 const fs = require('fs');
 const path = require('path');
-const readline = require('readline');
 const axios = require('axios');
 const os = require('os');
 const { exec } = require('child_process');
@@ -29,6 +27,10 @@ const execPromise = util.promisify(exec);
 
 // ─── Load Config ────────────────────────────────────────────────────────────
 const config = JSON.parse(fs.readFileSync('./config.json', 'utf-8'));
+
+// ─── Sessions folder ─────────────────────────────────────────────────────────
+const SESSION_DIR = './sessions';
+if (!fs.existsSync(SESSION_DIR)) fs.mkdirSync(SESSION_DIR, { recursive: true });
 
 // ─── Logger ──────────────────────────────────────────────────────────────────
 const LOG_LEVELS = { INFO: '✅', WARN: '⚠️', ERROR: '❌', DEBUG: '🔍' };
@@ -286,7 +288,6 @@ addCmd('calc', async (sock, msg, args) => {
   const expr = args.join(' ');
   try {
     const safeExpr = expr.replace(/[^0-9+\-*/.() ]/g, '');
-    // eslint-disable-next-line no-eval
     const result = Function('"use strict"; return (' + safeExpr + ')')();
     await reply(sock, msg, `🧮 *Calculator*\n\n📥 Input: \`${expr}\`\n📤 Result: *${result}*\n\n_Developed by Anoop Dubey 🚀_`);
   } catch {
@@ -346,7 +347,7 @@ addCmd('weather', async (sock, msg, args) => {
   const city = args.join(' ');
   try {
     const key = config.weatherApiKey || '';
-    if (!key) return reply(sock, msg, '❌ No weather API key set in config.json (weatherApiKey).');
+    if (!key || key === 'your_openweathermap_api_key') return reply(sock, msg, '❌ No weather API key set in config.json (weatherApiKey).');
     const res = await axios.get(
       `https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(city)}&appid=${key}&units=metric`,
       { timeout: 8000 }
@@ -397,7 +398,7 @@ _Developed by Anoop Dubey 🚀_`
 addCmd('news', async (sock, msg) => {
   try {
     const key = config.newsApiKey || '';
-    if (!key) return reply(sock, msg, '❌ No news API key set in config.json (newsApiKey).');
+    if (!key || key === 'your_newsapi_key') return reply(sock, msg, '❌ No news API key set in config.json (newsApiKey).');
     const res = await axios.get(
       `https://newsapi.org/v2/top-headlines?country=us&pageSize=5&apiKey=${key}`,
       { timeout: 8000 }
@@ -663,11 +664,11 @@ addCmd('8ball', async (sock, msg, args) => {
 
 addCmd('roast', async (sock, msg) => {
   const roasts = [
-    'You\'re the reason they put instructions on shampoo bottles.',
-    'I\'d agree with you but then we\'d both be wrong.',
-    'You\'re not stupid; you just have bad luck thinking.',
+    "You're the reason they put instructions on shampoo bottles.",
+    "I'd agree with you but then we'd both be wrong.",
+    "You're not stupid; you just have bad luck thinking.",
     'Some cause happiness wherever they go. You cause it whenever you go.',
-    'I\'d call you a tool, but that would mean you\'re actually useful.',
+    "I'd call you a tool, but that would mean you're actually useful.",
   ];
   await reply(sock, msg, `🔥 *Roast:*\n\n${roasts[Math.floor(Math.random() * roasts.length)]}\n\n_Developed by Anoop Dubey 🚀_`);
 });
@@ -688,7 +689,7 @@ addCmd('would', async (sock, msg) => {
     'Would you rather have super speed or super strength?',
     'Would you rather be invisible or be able to fly?',
     'Would you rather eat only pizza or only sushi for life?',
-    'Would you rather know when you\'ll die or how you\'ll die?',
+    "Would you rather know when you'll die or how you'll die?",
     'Would you rather be a famous actor or a famous musician?',
   ];
   await reply(sock, msg, `🤔 *Would You Rather?*\n\n${questions[Math.floor(Math.random() * questions.length)]}\n\n_Developed by Anoop Dubey 🚀_`);
@@ -696,10 +697,10 @@ addCmd('would', async (sock, msg) => {
 
 addCmd('truth', async (sock, msg) => {
   const truths = [
-    'What\'s the most embarrassing thing you\'ve ever done?',
-    'What\'s your biggest secret?',
+    "What's the most embarrassing thing you've ever done?",
+    "What's your biggest secret?",
     'Have you ever lied to your best friend?',
-    'What\'s the worst thing you\'ve ever said about someone behind their back?',
+    "What's the worst thing you've ever said about someone behind their back?",
     'Have you ever cheated on a test?',
   ];
   await reply(sock, msg, `💬 *Truth:*\n\n${truths[Math.floor(Math.random() * truths.length)]}\n\n_Developed by Anoop Dubey 🚀_`);
@@ -756,7 +757,7 @@ addCmd('cat', async (sock, msg) => {
     const res = await axios.get('https://api.thecatapi.com/v1/images/search', { timeout: 8000 });
     await sock.sendMessage(msg.key.remoteJid, {
       image: { url: res.data[0].url },
-      caption: '🐱 Here\'s a cute cat!\n\n_Developed by Anoop Dubey 🚀_',
+      caption: "🐱 Here's a cute cat!\n\n_Developed by Anoop Dubey 🚀_",
     }, { quoted: msg });
   } catch {
     await reply(sock, msg, '❌ Failed to fetch cat image.');
@@ -768,7 +769,7 @@ addCmd('dog', async (sock, msg) => {
     const res = await axios.get('https://dog.ceo/api/breeds/image/random', { timeout: 8000 });
     await sock.sendMessage(msg.key.remoteJid, {
       image: { url: res.data.message },
-      caption: '🐶 Here\'s a cute dog!\n\n_Developed by Anoop Dubey 🚀_',
+      caption: "🐶 Here's a cute dog!\n\n_Developed by Anoop Dubey 🚀_",
     }, { quoted: msg });
   } catch {
     await reply(sock, msg, '❌ Failed to fetch dog image.');
@@ -780,7 +781,7 @@ addCmd('fox', async (sock, msg) => {
     const res = await axios.get('https://randomfox.ca/floof/', { timeout: 8000 });
     await sock.sendMessage(msg.key.remoteJid, {
       image: { url: res.data.image },
-      caption: '🦊 Here\'s a cute fox!\n\n_Developed by Anoop Dubey 🚀_',
+      caption: "🦊 Here's a cute fox!\n\n_Developed by Anoop Dubey 🚀_",
     }, { quoted: msg });
   } catch {
     await reply(sock, msg, '❌ Failed to fetch fox image.');
@@ -827,7 +828,7 @@ addCmd('tagall', async (sock, msg) => {
   }
 });
 
-addCmd('kick', async (sock, msg, args) => {
+addCmd('kick', async (sock, msg) => {
   const jid = msg.key.remoteJid;
   if (!jid.endsWith('@g.us')) return reply(sock, msg, '❌ Groups only.');
   const mentioned = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
@@ -1210,11 +1211,14 @@ async function handleMessage(sock, msg) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-//  CONNECTION
+//  CONNECTION — Railway-safe, no stdin, auto pairing code from config
 // ────────────────────────────────────────────────────────────────────────────
 
+let isReconnecting = false;
+
 async function startBot() {
-  const { state, saveCreds } = await useMultiFileAuthState('./auth_info');
+  // Use sessions folder for persistent auth
+  const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
   const { version } = await fetchLatestBaileysVersion();
   log('INFO', `Using Baileys v${version.join('.')}`);
 
@@ -1224,32 +1228,74 @@ async function startBot() {
     printQRInTerminal: false,
     browser: [config.botName || 'AnoopBot', 'Chrome', '1.0.0'],
     syncFullHistory: false,
-    logger: { level: 'silent', trace: () => {}, debug: () => {}, info: () => {}, warn: () => {}, error: () => {}, fatal: () => {}, child: () => ({ level: 'silent', trace: () => {}, debug: () => {}, info: () => {}, warn: () => {}, error: () => {}, fatal: () => {} }) },
+    logger: {
+      level: 'silent',
+      trace: () => {}, debug: () => {}, info: () => {},
+      warn: () => {}, error: () => {}, fatal: () => {},
+      child: () => ({
+        level: 'silent',
+        trace: () => {}, debug: () => {}, info: () => {},
+        warn: () => {}, error: () => {}, fatal: () => {},
+        child: () => ({})
+      })
+    },
   });
 
-  // Pairing code (no QR)
+  // ── Auto pairing code on first run (no stdin, reads from config) ──────────
   if (!sock.authState.creds.registered) {
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-    rl.question('📱 Enter your WhatsApp number (with country code, no +): ', async (number) => {
-      rl.close();
-      const code = await sock.requestPairingCode(number.trim());
-      log('INFO', `\n╔══════════════════════════╗\n║  PAIRING CODE: ${code}  ║\n╚══════════════════════════╝`);
-      console.log(`\n🔑 Enter this code in WhatsApp → Linked Devices → Link a Device\n`);
-    });
+    const phoneNumber = (config.phoneNumber || config.ownerNumber || '').replace(/[^0-9]/g, '');
+    if (!phoneNumber) {
+      log('ERROR', 'No phoneNumber found in config.json! Add "phoneNumber": "91XXXXXXXXXX" to config.json');
+      process.exit(1);
+    }
+
+    // Small delay to let the socket fully init before requesting pairing
+    await sleep(3000);
+
+    try {
+      const code = await sock.requestPairingCode(phoneNumber);
+      console.log(`\n╔══════════════════════════════════════╗`);
+      console.log(`║        🔑 PAIRING CODE BELOW         ║`);
+      console.log(`╠══════════════════════════════════════╣`);
+      console.log(`║           ${code}            ║`);
+      console.log(`╚══════════════════════════════════════╝`);
+      console.log(`\n➡️  Open WhatsApp → Linked Devices → Link a Device`);
+      console.log(`➡️  Enter the code above when prompted\n`);
+    } catch (err) {
+      log('ERROR', `Failed to get pairing code: ${err.message}`);
+    }
   }
 
   sock.ev.on('creds.update', saveCreds);
 
-  sock.ev.on('connection.update', (update) => {
+  sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect } = update;
+
     if (connection === 'close') {
-      const code = lastDisconnect?.error?.output?.statusCode;
-      const shouldReconnect = code !== DisconnectReason.loggedOut;
-      log(shouldReconnect ? 'WARN' : 'ERROR', `Connection closed (${code}). Reconnect: ${shouldReconnect}`);
-      if (shouldReconnect) setTimeout(startBot, 5000);
+      const statusCode = lastDisconnect?.error?.output?.statusCode;
+      const isLoggedOut = statusCode === DisconnectReason.loggedOut;
+
+      if (isLoggedOut) {
+        log('ERROR', 'Logged out from WhatsApp. Delete the sessions folder and restart to re-link.');
+        process.exit(1);
+      }
+
+      if (!isReconnecting) {
+        isReconnecting = true;
+        log('WARN', `Connection closed (code: ${statusCode}). Reconnecting in 5s...`);
+        setTimeout(async () => {
+          isReconnecting = false;
+          await startBot();
+        }, 5000);
+      }
     } else if (connection === 'open') {
-      log('INFO', `✅ Bot connected as ${sock.user?.id}`);
-      console.log(`\n╔══════════════════════════════════════╗\n║  🤖 ${(config.botName || 'AnoopBot').padEnd(30)}  ║\n║  ✅ Bot is ONLINE and ready!         ║\n║  Developed by Anoop Dubey 🚀         ║\n╚══════════════════════════════════════╝\n`);
+      isReconnecting = false;
+      log('INFO', `Bot connected as ${sock.user?.id}`);
+      console.log(`\n╔══════════════════════════════════════╗`);
+      console.log(`║  🤖 ${(config.botName || 'AnoopBot').padEnd(30)}  ║`);
+      console.log(`║  ✅ Bot is ONLINE and ready!         ║`);
+      console.log(`║  Developed by Anoop Dubey 🚀         ║`);
+      console.log(`╚══════════════════════════════════════╝\n`);
     } else if (connection === 'connecting') {
       log('INFO', 'Connecting to WhatsApp...');
     }
