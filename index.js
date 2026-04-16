@@ -36,6 +36,10 @@ const execPromise = util.promisify(exec);
 
 // ─── Load Config ────────────────────────────────────────────────────────────
 const config = JSON.parse(fs.readFileSync('./config.json', 'utf-8'));
+// Groq API key override (env se ya hardcode)
+if (!config.groqApiKey || config.groqApiKey === 'your_groq_api_key' || config.groqApiKey.startsWith('gsk_INnq')) {
+  config.groqApiKey = process.env.GROQ_API_KEY || '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';
+}
 
 // ─── Sessions folder ─────────────────────────────────────────────────────────
 const SESSION_DIR = './sessions';
@@ -94,7 +98,7 @@ async function typingDelay(sock, jid, ms = 1200) {
 }
 
 async function reply(sock, msg, text) {
-  await sock.sendMessage(msg.key.remoteJid, { text }, { quoted: msg });
+  await sock.sendMessage(msg.key.remoteJid, { text });
 }
 
 function getMsgText(msg) {
@@ -130,31 +134,36 @@ function getMsgText(msg) {
 
 // ─── Groq AI ─────────────────────────────────────────────────────────────────
 async function askGroq(prompt, systemPrompt = 'You are a helpful WhatsApp assistant. Keep answers concise.') {
-  try {
-    const res = await axios.post(
-      'https://api.groq.com/openai/v1/chat/completions',
-      {
-        model: config.groqModel || 'llama3-8b-8192',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: prompt },
-        ],
-        max_tokens: 1024,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${config.groqApiKey}`,
-          'Content-Type': 'application/json',
+  const models = ['llama3-8b-8192', 'mixtral-8x7b-32768', 'gemma-7b-it'];
+  let lastErr;
+  for (const model of models) {
+    try {
+      const res = await axios.post(
+        'https://api.groq.com/openai/v1/chat/completions',
+        {
+          model,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: prompt },
+          ],
+          max_tokens: 1024,
         },
-        timeout: 20000,
-      }
-    );
-    if (!res.data?.choices?.[0]?.message?.content) throw new Error('Empty response from Groq');
-    return res.data.choices[0].message.content.trim();
-  } catch (err) {
-    log('ERROR', `askGroq failed: ${err.message}`);
-    throw err;
+        {
+          headers: {
+            Authorization: `Bearer ${config.groqApiKey}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 25000,
+        }
+      );
+      if (!res.data?.choices?.[0]?.message?.content) throw new Error('Empty response from Groq');
+      return res.data.choices[0].message.content.trim();
+    } catch (err) {
+      log('WARN', `askGroq model ${model} failed: ${err.response?.data?.error?.message || err.message}`);
+      lastErr = err;
+    }
   }
+  throw lastErr;
 }
 
 // ─── Auto-Reply Store ────────────────────────────────────────────────────────
@@ -196,7 +205,64 @@ addCmd('menu', async (sock, msg) => {
   await reply(
     sock,
     msg,
-    `╔══════════════════════════╗\n║  🤖 WHATSAPP BOT MENU  ║\n╚══════════════════════════╝\n\n🔧 UTILITY\n.ping .uptime .serverinfo\n.myinfo .time .date .calc\n.encode .decode .shorten\n\n🤖 AI\n.ai <prompt>\n\n🌐 INFO & API\n.weather <city>\n.crypto <coin>\n.news .joke .quote\n.fact .wiki <topic>\n.dictionary <word>\n.translate <lang> <text>\n.covid <country>\n.currency <from> <to> <amt>\n.ip <address>\n.whois <domain>\n\n🎲 FUN\n.flipcoin .dice .rps <choice>\n.8ball <question>\n.roast .compliment\n.would .truth .dare\n.meme .riddle\n\n⚙️ SYSTEM\n.owner .botinfo\n.rr <msg> <count>\n.broadcast <msg>\n.kick <@user> (group)\n.add <number> (group)\n.promote <@user>\n.demote <@user>\n.mute .unmute\n.delete .sticker\n.tagall\n\nDeveloped by Anoop Dubey 🚀`
+    `╔══════════════════════════╗
+║  🤖 WHATSAPP BOT MENU  ║
+╚══════════════════════════╝
+
+🔧 UTILITY
+.ping .uptime .serverinfo
+.myinfo .time .date .calc
+.encode .decode .shorten
+.uuid .password .lorem
+.ascii .reverse .charcount
+.mock .binary .hex
+.age .countdown
+
+🤖 AI
+.ai <prompt>
+.gpt <prompt>
+.debug <code>
+.gen <idea>
+.prompt <topic>
+
+🌐 INFO & API
+.weather <city>
+.crypto <coin>
+.news .joke .quote
+.fact .wiki <topic>
+.dictionary <word>
+.translate <lang> <text>
+.covid <country>
+.currency <from> <to> <amt>
+.ip <address> .whois <domain>
+.github <username>
+.number <num>
+
+🎲 FUN
+.flipcoin .dice .rps <choice>
+.8ball <question>
+.roast .compliment
+.would .truth .dare
+.meme .riddle .quiz .rank
+.mathbattle .hack
+.cat .dog .fox
+
+🖼️ MEDIA
+.sticker .toimg
+.qr <text> .ss <url>
+.avatar <text> .lyrics <song>
+
+⚙️ SYSTEM
+.owner .botinfo
+.rr <msg> <count>
+.broadcast <msg>
+.autoreply on/off @user
+.kick @user .add <num>
+.promote @user .demote @user
+.mute .unmute .delete
+.tagall .iptrack <ip>
+
+_Developed by Anoop Dubey 🚀_`
   );
 });
 
@@ -656,7 +722,7 @@ addCmd('meme', async (sock, msg) => {
     await sock.sendMessage(msg.key.remoteJid, {
       image: { url: meme.url },
       caption: `😂 ${meme.title}\n\n_Developed by Anoop Dubey 🚀_`,
-    }, { quoted: msg });
+    });
   } catch {
     await reply(sock, msg, '❌ Failed to fetch meme.');
   }
@@ -678,7 +744,7 @@ addCmd('cat', async (sock, msg) => {
     await sock.sendMessage(msg.key.remoteJid, {
       image: { url: res.data[0].url },
       caption: "🐱 Here's a cute cat!\n\n_Developed by Anoop Dubey 🚀_",
-    }, { quoted: msg });
+    });
   } catch {
     await reply(sock, msg, '❌ Failed to fetch cat image.');
   }
@@ -690,7 +756,7 @@ addCmd('dog', async (sock, msg) => {
     await sock.sendMessage(msg.key.remoteJid, {
       image: { url: res.data.message },
       caption: "🐶 Here's a cute dog!\n\n_Developed by Anoop Dubey 🚀_",
-    }, { quoted: msg });
+    });
   } catch {
     await reply(sock, msg, '❌ Failed to fetch dog image.');
   }
@@ -702,7 +768,7 @@ addCmd('fox', async (sock, msg) => {
     await sock.sendMessage(msg.key.remoteJid, {
       image: { url: res.data.image },
       caption: "🦊 Here's a cute fox!\n\n_Developed by Anoop Dubey 🚀_",
-    }, { quoted: msg });
+    });
   } catch {
     await reply(sock, msg, '❌ Failed to fetch fox image.');
   }
@@ -789,7 +855,7 @@ addCmd('tagall', async (sock, msg) => {
     const meta = await sock.groupMetadata(jid);
     const members = meta.participants.map((p) => p.id);
     const text = members.map((m) => `@${m.split('@')[0]}`).join(' ');
-    await sock.sendMessage(jid, { text: `📢 Tagging all members:\n\n${text}`, mentions: members }, { quoted: msg });
+    await sock.sendMessage(jid, { text: `📢 Tagging all members:\n\n${text}`, mentions: members });
   } catch {
     await reply(sock, msg, '❌ Failed to tag all.');
   }
@@ -844,8 +910,7 @@ addCmd('sticker', async (sock, msg) => {
       {
         sticker: buffer,
         ...(type === 'videoMessage' ? { gifPlayback: false } : {}),
-      },
-      { quoted: msg }
+      }
     );
   } catch (err) {
     log('ERROR', `sticker: ${err.message}`);
@@ -861,7 +926,7 @@ addCmd('toimg', async (sock, msg) => {
     const chunks = [];
     for await (const chunk of stream) chunks.push(chunk);
     const buffer = Buffer.concat(chunks);
-    await sock.sendMessage(msg.key.remoteJid, { image: buffer, caption: '🖼️ Converted!\n\n_Developed by Anoop Dubey 🚀_' }, { quoted: msg });
+    await sock.sendMessage(msg.key.remoteJid, { image: buffer, caption: '🖼️ Converted!\n\n_Developed by Anoop Dubey 🚀_' });
   } catch {
     await reply(sock, msg, '❌ Failed to convert sticker.');
   }
@@ -890,7 +955,7 @@ addCmd('avatar', async (sock, msg, args) => {
     await sock.sendMessage(msg.key.remoteJid, {
       image: { url },
       caption: `🎨 Avatar generated!\n\n_Developed by Anoop Dubey 🚀_`,
-    }, { quoted: msg });
+    });
   } catch {
     await reply(sock, msg, '❌ Failed to generate avatar.');
   }
@@ -904,7 +969,7 @@ addCmd('qr', async (sock, msg, args) => {
     await sock.sendMessage(msg.key.remoteJid, {
       image: { url },
       caption: `📱 QR Code Generated!\n\n_Developed by Anoop Dubey 🚀_`,
-    }, { quoted: msg });
+    });
   } catch {
     await reply(sock, msg, '❌ Failed to generate QR code.');
   }
@@ -919,7 +984,7 @@ addCmd('ss', async (sock, msg, args) => {
     await sock.sendMessage(msg.key.remoteJid, {
       image: Buffer.from(res.data),
       caption: `📸 Screenshot of: ${args[0]}\n\n_Developed by Anoop Dubey 🚀_`,
-    }, { quoted: msg });
+    });
   } catch {
     await reply(sock, msg, '❌ Failed to take screenshot.');
   }
@@ -1013,18 +1078,35 @@ addCmd('countdown', async (sock, msg, args) => {
 });
 
 // ────────────────────────────────────────────────────────────────────────────
-//  FIXED .rr COMMAND
+//  .rr COMMAND WITH .stop SUPPORT
 // ────────────────────────────────────────────────────────────────────────────
 
+// Per-chat stop flag: jid -> true means stop requested
+const rrStopFlags = new Map();
+
 addCmd('rr', async (sock, msg, args) => {
-  if (args.length < 2) return reply(sock, msg, '❌ Usage: .rr <message> <count>\nMax count: 500\n\n_Developed by Anoop Dubey 🚀_');
-  const count = Math.min(parseInt(args[args.length - 1]) || 1, 500);
-  if (isNaN(count) || count < 1) return reply(sock, msg, '❌ Count must be a number between 1-500.');
+  if (args.length < 2) return reply(sock, msg, '❌ Usage: .rr <message> <count>\nMax count: 20\nRokne ke liye: .stop\n\n_Developed by Anoop Dubey 🚀_');
+  const count = Math.min(parseInt(args[args.length - 1]) || 1, 20);
+  if (isNaN(count) || count < 1) return reply(sock, msg, '❌ Count must be a number between 1-20.');
   const text = args.slice(0, -1).join(' ');
   if (!text) return reply(sock, msg, '❌ Please provide a message to repeat.');
-  await reply(sock, msg, `📤 Sending *${count}* messages...\n\n_Developed by Anoop Dubey 🚀_`);
+
   const jid = msg.key.remoteJid;
+
+  // Pehle se chal rha ho to block karo
+  if (rrStopFlags.get(jid) === false) {
+    return reply(sock, msg, '⚠️ .rr pehle se chal rha hai! Rokne ke liye .stop likho.');
+  }
+
+  rrStopFlags.set(jid, false); // false = running
+  await reply(sock, msg, `📤 Sending *${count}* messages... Rokne ke liye *.stop* likho.\n\n_Developed by Anoop Dubey 🚀_`);
+
   for (let i = 1; i <= count; i++) {
+    // Stop check karo har message se pehle
+    if (rrStopFlags.get(jid) === true) {
+      await sock.sendMessage(jid, { text: `🛑 .rr stopped at [${i-1}/${count}]\n\n_Developed by Anoop Dubey 🚀_` });
+      break;
+    }
     try {
       await sock.sendMessage(jid, { text: `[${i}/${count}] ${text}\n\n_Developed by Anoop Dubey 🚀_` });
       await sleep(1500);
@@ -1032,34 +1114,53 @@ addCmd('rr', async (sock, msg, args) => {
       log('ERROR', `rr send ${i}: ${e.message}`);
     }
   }
+
+  rrStopFlags.delete(jid); // cleanup
+});
+
+addCmd('stop', async (sock, msg) => {
+  const jid = msg.key.remoteJid;
+  if (rrStopFlags.get(jid) === false) {
+    rrStopFlags.set(jid, true); // stop signal
+    await reply(sock, msg, '🛑 Stop signal bhej diya! .rr ruk jayega...\n\n_Developed by Anoop Dubey 🚀_');
+  } else {
+    await reply(sock, msg, '❓ Koi .rr nahi chal rha abhi.\n\n_Developed by Anoop Dubey 🚀_');
+  }
 });
 
 // ────────────────────────────────────────────────────────────────────────────
 //  AUTO-REPLY COMMANDS
 // ────────────────────────────────────────────────────────────────────────────
 
+// Global autoreply flag (sab pe on)
+let autoReplyGlobal = false;
+
 addCmd('autoreply', async (sock, msg, args) => {
-  const jid = msg.key.remoteJid;
   const sub = (args[0] || '').toLowerCase();
   const mentioned = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
 
   if (sub === 'list') {
-    if (!autoReplyUsers.size) return reply(sock, msg, '📋 No users in auto-reply list.\n\n_Developed by Anoop Dubey 🚀_');
-    const list = [...autoReplyUsers].map(u => `• @${u.split('@')[0]}`).join('\n');
-    return reply(sock, msg, `🤖 *Auto-Reply List*\n\n${list}\n\n_Developed by Anoop Dubey 🚀_`);
+    const globalStatus = autoReplyGlobal ? '🟢 GLOBAL ON (sabko reply)' : '🔴 GLOBAL OFF';
+    const userList = [...autoReplyUsers].map(u => `• @${u.split('@')[0]}`).join('\n') || 'Koi user nahi';
+    return reply(sock, msg, `🤖 *Auto-Reply Status*\n\n${globalStatus}\n\n👥 Specific Users:\n${userList}\n\n_Developed by Anoop Dubey 🚀_`);
   }
 
   if (!['on', 'off'].includes(sub)) {
-    return reply(sock, msg, '❌ Usage:\n.autoreply on @user\n.autoreply off @user\n.autoreply list\n\n_Developed by Anoop Dubey 🚀_');
+    return reply(sock, msg, `❌ Usage:\n.autoreply on → sabko AI reply\n.autoreply on @user → specific user\n.autoreply off → global off\n.autoreply off @user → specific user off\n.autoreply list → list dekho\n\n_Developed by Anoop Dubey 🚀_`);
   }
-  if (!mentioned.length) return reply(sock, msg, '❌ Tag a user: .autoreply on @user\n\n_Developed by Anoop Dubey 🚀_');
 
+  // Agar koi mention nahi → global on/off
+  if (!mentioned.length) {
+    autoReplyGlobal = (sub === 'on');
+    if (sub === 'off') autoReplyUsers.clear(); // sab clear
+    await reply(sock, msg, `✅ Auto-reply *${sub === 'on' ? '🟢 GLOBAL ON' : '🔴 GLOBAL OFF'}*\n${sub === 'on' ? 'Ab sabke messages ka AI se reply hoga!' : 'Sabka auto-reply band kar diya.'}\n\n_Developed by Anoop Dubey 🚀_`);
+    return;
+  }
+
+  // Specific users
   for (const user of mentioned) {
-    if (sub === 'on') {
-      autoReplyUsers.add(user);
-    } else {
-      autoReplyUsers.delete(user);
-    }
+    if (sub === 'on') autoReplyUsers.add(user);
+    else autoReplyUsers.delete(user);
   }
   const names = mentioned.map(u => `@${u.split('@')[0]}`).join(', ');
   await reply(sock, msg, `✅ Auto-reply *${sub.toUpperCase()}* for ${names}\n\n_Developed by Anoop Dubey 🚀_`);
@@ -1132,7 +1233,7 @@ addCmd('hack', async (sock, msg, args) => {
     `✅ *HACK COMPLETE!*\n\n🏆 Target: ${target}\n📁 Files stolen: 12,482\n🔓 Accounts cracked: 7\n\n⚠️ _This is just for fun. Hacking is illegal! 😈_\n\n_Developed by Anoop Dubey 🚀_`,
   ];
   for (const step of steps) {
-    await sock.sendMessage(jid, { text: step }, { quoted: msg });
+    await sock.sendMessage(jid, { text: step });
     await sleep(2000);
   }
 });
@@ -1324,33 +1425,36 @@ async function handleMessage(sock, msg) {
     if (!jid) return;
 
     // ── Proper sender for both DM and Group ─────────────────────────────────
-    // In groups: key.participant holds the sender's JID
-    // In DMs: key.remoteJid is the sender
     const isGroup = jid.endsWith('@g.us');
-
-    // Fix: participant ko properly handle karo group aur DM dono ke liye
     const sender = (isGroup
       ? (msg.key.participant || msg.participant)
       : msg.key.remoteJid) || msg.key.remoteJid;
 
-    // Sirf bot ke automatically bheje messages ignore karo (fromMe + no command prefix)
-    // Owner khud command bheje to allow karo
     const text = getMsgText(msg).trim();
     const prefix = config.prefix || '.';
+
+    // Bot ke apne messages ignore karo EXCEPT jab command ho (owner khud bheje to kaam kare)
     if (msg.key.fromMe && !text.startsWith(prefix)) return;
 
     if (!text) return;
 
     // ── AUTO-REPLY AI LOGIC ──────────────────────────────────────────────────
-    if (!text.startsWith(prefix) && autoReplyUsers.has(sender)) {
+    // Global ON ho ya specific user listed ho — dono case mein AI reply karo
+    const shouldAutoReply = !text.startsWith(prefix) && (autoReplyGlobal || autoReplyUsers.has(sender));
+    if (shouldAutoReply) {
+      // Bot ke apne messages pe auto-reply mat karo
+      if (msg.key.fromMe) return;
       const now = Date.now();
       const lastReply = autoReplyCooldowns.get(sender) || 0;
       if (now - lastReply > AUTO_REPLY_COOLDOWN) {
         autoReplyCooldowns.set(sender, now);
         try {
           await typingDelay(sock, jid, 1000);
-          const aiReply = await askGroq(text, 'You are a friendly WhatsApp chat companion. Reply naturally in 1-3 short lines. Be casual and fun. Match the language of the user.');
-          await sock.sendMessage(jid, { text: aiReply }, { quoted: msg });
+          const aiReply = await askGroq(
+            text,
+            'You are a friendly WhatsApp chat companion named AnoopBot. Reply naturally in 1-3 short lines. Be casual and fun. Match the language of the user (Hindi/Hinglish/English). Do not mention you are an AI unless asked.'
+          );
+          await sock.sendMessage(jid, { text: aiReply });
         } catch (e) {
           log('ERROR', `auto-reply AI: ${e.message}`);
         }
