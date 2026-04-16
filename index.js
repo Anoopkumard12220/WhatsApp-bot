@@ -1017,9 +1017,9 @@ addCmd('countdown', async (sock, msg, args) => {
 // ────────────────────────────────────────────────────────────────────────────
 
 addCmd('rr', async (sock, msg, args) => {
-  if (args.length < 2) return reply(sock, msg, '❌ Usage: .rr <message> <count>\nMax count: 20\n\n_Developed by Anoop Dubey 🚀_');
-  const count = Math.min(parseInt(args[args.length - 1]) || 1, 20);
-  if (isNaN(count) || count < 1) return reply(sock, msg, '❌ Count must be a number between 1-20.');
+  if (args.length < 2) return reply(sock, msg, '❌ Usage: .rr <message> <count>\nMax count: 500\n\n_Developed by Anoop Dubey 🚀_');
+  const count = Math.min(parseInt(args[args.length - 1]) || 1, 500);
+  if (isNaN(count) || count < 1) return reply(sock, msg, '❌ Count must be a number between 1-500.');
   const text = args.slice(0, -1).join(' ');
   if (!text) return reply(sock, msg, '❌ Please provide a message to repeat.');
   await reply(sock, msg, `📤 Sending *${count}* messages...\n\n_Developed by Anoop Dubey 🚀_`);
@@ -1319,7 +1319,6 @@ function formatUptime(seconds) {
 async function handleMessage(sock, msg) {
   try {
     if (!msg.message) return;
-    if (msg.key.fromMe) return; // ignore bot's own messages
 
     const jid = msg.key.remoteJid;
     if (!jid) return;
@@ -1328,12 +1327,19 @@ async function handleMessage(sock, msg) {
     // In groups: key.participant holds the sender's JID
     // In DMs: key.remoteJid is the sender
     const isGroup = jid.endsWith('@g.us');
-    const sender = (isGroup ? msg.key.participant : msg.key.remoteJid) || msg.key.remoteJid;
 
+    // Fix: participant ko properly handle karo group aur DM dono ke liye
+    const sender = (isGroup
+      ? (msg.key.participant || msg.participant)
+      : msg.key.remoteJid) || msg.key.remoteJid;
+
+    // Sirf bot ke automatically bheje messages ignore karo (fromMe + no command prefix)
+    // Owner khud command bheje to allow karo
     const text = getMsgText(msg).trim();
-    if (!text) return;
-
     const prefix = config.prefix || '.';
+    if (msg.key.fromMe && !text.startsWith(prefix)) return;
+
+    if (!text) return;
 
     // ── AUTO-REPLY AI LOGIC ──────────────────────────────────────────────────
     if (!text.startsWith(prefix) && autoReplyUsers.has(sender)) {
