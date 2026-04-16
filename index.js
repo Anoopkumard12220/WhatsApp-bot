@@ -98,37 +98,69 @@ async function reply(sock, msg, text) {
 }
 
 function getMsgText(msg) {
-  const type = getContentType(msg.message);
-  if (!type) return '';
-  if (type === 'conversation') return msg.message.conversation;
-  if (type === 'extendedTextMessage') return msg.message.extendedTextMessage.text;
-  if (type === 'imageMessage') return msg.message.imageMessage.caption || '';
-  if (type === 'videoMessage') return msg.message.videoMessage.caption || '';
-  return '';
+  try {
+    const m = msg.message;
+    if (!m) return '';
+
+    // unwrap ephemeral / view-once wrappers
+    const inner =
+      m.ephemeralMessage?.message ||
+      m.viewOnceMessage?.message ||
+      m.viewOnceMessageV2?.message ||
+      m.documentWithCaptionMessage?.message ||
+      m;
+
+    const type = getContentType(inner);
+    if (!type) return '';
+
+    if (type === 'conversation') return inner.conversation || '';
+    if (type === 'extendedTextMessage') return inner.extendedTextMessage?.text || '';
+    if (type === 'imageMessage') return inner.imageMessage?.caption || '';
+    if (type === 'videoMessage') return inner.videoMessage?.caption || '';
+    if (type === 'documentMessage') return inner.documentMessage?.caption || '';
+    if (type === 'buttonsResponseMessage') return inner.buttonsResponseMessage?.selectedDisplayText || '';
+    if (type === 'listResponseMessage') return inner.listResponseMessage?.singleSelectReply?.selectedRowId || '';
+    if (type === 'templateButtonReplyMessage') return inner.templateButtonReplyMessage?.selectedId || '';
+
+    return '';
+  } catch {
+    return '';
+  }
 }
 
 // ─── Groq AI ─────────────────────────────────────────────────────────────────
-async function askGroq(prompt) {
-  const res = await axios.post(
-    'https://api.groq.com/openai/v1/chat/completions',
-    {
-      model: config.groqModel || 'llama3-8b-8192',
-      messages: [
-        { role: 'system', content: 'You are a helpful WhatsApp assistant. Keep answers concise.' },
-        { role: 'user', content: prompt },
-      ],
-      max_tokens: 1024,
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${config.groqApiKey}`,
-        'Content-Type': 'application/json',
+async function askGroq(prompt, systemPrompt = 'You are a helpful WhatsApp assistant. Keep answers concise.') {
+  try {
+    const res = await axios.post(
+      'https://api.groq.com/openai/v1/chat/completions',
+      {
+        model: config.groqModel || 'llama3-8b-8192',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: prompt },
+        ],
+        max_tokens: 1024,
       },
-      timeout: 20000,
-    }
-  );
-  return res.data.choices[0].message.content.trim();
+      {
+        headers: {
+          Authorization: `Bearer ${config.groqApiKey}`,
+          'Content-Type': 'application/json',
+        },
+        timeout: 20000,
+      }
+    );
+    if (!res.data?.choices?.[0]?.message?.content) throw new Error('Empty response from Groq');
+    return res.data.choices[0].message.content.trim();
+  } catch (err) {
+    log('ERROR', `askGroq failed: ${err.message}`);
+    throw err;
+  }
 }
+
+// ─── Auto-Reply Store ────────────────────────────────────────────────────────
+const autoReplyUsers = new Set();
+const autoReplyCooldowns = new Map();
+const AUTO_REPLY_COOLDOWN = 8000;
 
 // ─── Command Definitions ──────────────────────────────────────────────────────
 const commands = {};
@@ -265,14 +297,17 @@ addCmd('shorten', async (sock, msg, args) => {
 
 addCmd('ai', async (sock, msg, args) => {
   if (!args.length) return reply(sock, msg, '❌ Usage: .ai <your question>');
+  if (!config.groqApiKey || config.groqApiKey === 'your_groq_api_key') {
+    return reply(sock, msg, '❌ Groq API key not set in config.json');
+  }
   const prompt = args.join(' ');
   await typingDelay(sock, msg.key.remoteJid, 2000);
   try {
     const answer = await askGroq(prompt);
-    await reply(sock, msg, `🤖 AI Response:\n\n${answer}\n\n_Developed by Anoop Dubey 🚀_`);
+    await reply(sock, msg, `🤖 *AI Response*\n\n${answer}\n\n_Developed by Anoop Dubey 🚀_`);
   } catch (e) {
     log('ERROR', `Groq API: ${e.message}`);
-    await reply(sock, msg, '❌ AI is unavailable right now. Check your Groq API key.');
+    await reply(sock, msg, '❌ AI unavailable right now. Try again later.\n\n_Developed by Anoop Dubey 🚀_');
   }
 });
 
@@ -790,18 +825,31 @@ addCmd('broadcast', async (sock, msg, args) => {
 });
 
 addCmd('sticker', async (sock, msg) => {
-  const quoted = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
-  if (!quoted) return reply(sock, msg, '❌ Reply to an image/video to make a sticker.');
-  const type = getContentType(quoted);
-  if (!['imageMessage', 'videoMessage'].includes(type)) return reply(sock, msg, '❌ Reply to an image or video.');
   try {
-    const stream = await sock.downloadContentFromMessage(quoted[type], type === 'imageMessage' ? 'image' : 'video');
+    const quoted = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+    if (!quoted) return reply(sock, msg, '❌ Reply to an image or short video to make a sticker.\n\n_Developed by Anoop Dubey 🚀_');
+    const type = getContentType(quoted);
+    if (!['imageMessage', 'videoMessage'].includes(type)) {
+      return reply(sock, msg, '❌ Reply to an *image* or *video* only.\n\n_Developed by Anoop Dubey 🚀_');
+    }
+    await reply(sock, msg, '⏳ Creating sticker...');
+    const msgType = type === 'imageMessage' ? 'image' : 'video';
+    const stream = await sock.downloadContentFromMessage(quoted[type], msgType);
     const chunks = [];
     for await (const chunk of stream) chunks.push(chunk);
     const buffer = Buffer.concat(chunks);
-    await sock.sendMessage(msg.key.remoteJid, { sticker: buffer }, { quoted: msg });
-  } catch {
-    await reply(sock, msg, '❌ Failed to create sticker.');
+    if (!buffer.length) throw new Error('Empty buffer downloaded');
+    await sock.sendMessage(
+      msg.key.remoteJid,
+      {
+        sticker: buffer,
+        ...(type === 'videoMessage' ? { gifPlayback: false } : {}),
+      },
+      { quoted: msg }
+    );
+  } catch (err) {
+    log('ERROR', `sticker: ${err.message}`);
+    await reply(sock, msg, '❌ Failed to create sticker. Make sure image/video is not too large.\n\n_Developed by Anoop Dubey 🚀_');
   }
 });
 
@@ -965,6 +1013,294 @@ addCmd('countdown', async (sock, msg, args) => {
 });
 
 // ────────────────────────────────────────────────────────────────────────────
+//  FIXED .rr COMMAND
+// ────────────────────────────────────────────────────────────────────────────
+
+addCmd('rr', async (sock, msg, args) => {
+  if (args.length < 2) return reply(sock, msg, '❌ Usage: .rr <message> <count>\nMax count: 20\n\n_Developed by Anoop Dubey 🚀_');
+  const count = Math.min(parseInt(args[args.length - 1]) || 1, 20);
+  if (isNaN(count) || count < 1) return reply(sock, msg, '❌ Count must be a number between 1-20.');
+  const text = args.slice(0, -1).join(' ');
+  if (!text) return reply(sock, msg, '❌ Please provide a message to repeat.');
+  await reply(sock, msg, `📤 Sending *${count}* messages...\n\n_Developed by Anoop Dubey 🚀_`);
+  const jid = msg.key.remoteJid;
+  for (let i = 1; i <= count; i++) {
+    try {
+      await sock.sendMessage(jid, { text: `[${i}/${count}] ${text}\n\n_Developed by Anoop Dubey 🚀_` });
+      await sleep(1500);
+    } catch (e) {
+      log('ERROR', `rr send ${i}: ${e.message}`);
+    }
+  }
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+//  AUTO-REPLY COMMANDS
+// ────────────────────────────────────────────────────────────────────────────
+
+addCmd('autoreply', async (sock, msg, args) => {
+  const jid = msg.key.remoteJid;
+  const sub = (args[0] || '').toLowerCase();
+  const mentioned = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
+
+  if (sub === 'list') {
+    if (!autoReplyUsers.size) return reply(sock, msg, '📋 No users in auto-reply list.\n\n_Developed by Anoop Dubey 🚀_');
+    const list = [...autoReplyUsers].map(u => `• @${u.split('@')[0]}`).join('\n');
+    return reply(sock, msg, `🤖 *Auto-Reply List*\n\n${list}\n\n_Developed by Anoop Dubey 🚀_`);
+  }
+
+  if (!['on', 'off'].includes(sub)) {
+    return reply(sock, msg, '❌ Usage:\n.autoreply on @user\n.autoreply off @user\n.autoreply list\n\n_Developed by Anoop Dubey 🚀_');
+  }
+  if (!mentioned.length) return reply(sock, msg, '❌ Tag a user: .autoreply on @user\n\n_Developed by Anoop Dubey 🚀_');
+
+  for (const user of mentioned) {
+    if (sub === 'on') {
+      autoReplyUsers.add(user);
+    } else {
+      autoReplyUsers.delete(user);
+    }
+  }
+  const names = mentioned.map(u => `@${u.split('@')[0]}`).join(', ');
+  await reply(sock, msg, `✅ Auto-reply *${sub.toUpperCase()}* for ${names}\n\n_Developed by Anoop Dubey 🚀_`);
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+//  POWER AI COMMANDS
+// ────────────────────────────────────────────────────────────────────────────
+
+addCmd('gpt', async (sock, msg, args) => {
+  if (!args.length) return reply(sock, msg, '❌ Usage: .gpt <prompt>\n\n_Developed by Anoop Dubey 🚀_');
+  const prompt = args.join(' ');
+  await typingDelay(sock, msg.key.remoteJid, 1500);
+  try {
+    const ans = await askGroq(prompt, 'You are a smart AI assistant. Reply in 1-3 short lines. Be direct and helpful.');
+    await reply(sock, msg, `🧠 *GPT Response*\n\n${ans}\n\n_Developed by Anoop Dubey 🚀_`);
+  } catch {
+    await reply(sock, msg, '❌ AI unavailable. Try again.\n\n_Developed by Anoop Dubey 🚀_');
+  }
+});
+
+addCmd('debug', async (sock, msg, args) => {
+  if (!args.length) return reply(sock, msg, '❌ Usage: .debug <your code>\n\n_Developed by Anoop Dubey 🚀_');
+  const code = args.join(' ');
+  await typingDelay(sock, msg.key.remoteJid, 2000);
+  try {
+    const ans = await askGroq(`Debug this code and explain the bug clearly:\n\`\`\`\n${code}\n\`\`\``, 'You are a senior developer. Find bugs, explain them simply, and suggest the fix. Be concise.');
+    await reply(sock, msg, `🐛 *Debug Analysis*\n\n${ans}\n\n_Developed by Anoop Dubey 🚀_`);
+  } catch {
+    await reply(sock, msg, '❌ AI unavailable.\n\n_Developed by Anoop Dubey 🚀_');
+  }
+});
+
+addCmd('gen', async (sock, msg, args) => {
+  if (!args.length) return reply(sock, msg, '❌ Usage: .gen <idea topic>\n\n_Developed by Anoop Dubey 🚀_');
+  const idea = args.join(' ');
+  await typingDelay(sock, msg.key.remoteJid, 2000);
+  try {
+    const ans = await askGroq(`Generate a unique startup/business idea about: ${idea}`, 'You generate creative startup ideas. Format: Name, Problem, Solution, Revenue Model. Keep it short.');
+    await reply(sock, msg, `💡 *Startup Idea*\n\n${ans}\n\n_Developed by Anoop Dubey 🚀_`);
+  } catch {
+    await reply(sock, msg, '❌ AI unavailable.\n\n_Developed by Anoop Dubey 🚀_');
+  }
+});
+
+addCmd('prompt', async (sock, msg, args) => {
+  if (!args.length) return reply(sock, msg, '❌ Usage: .prompt <topic>\n\n_Developed by Anoop Dubey 🚀_');
+  const topic = args.join(' ');
+  await typingDelay(sock, msg.key.remoteJid, 1500);
+  try {
+    const ans = await askGroq(`Create a powerful AI prompt for the topic: ${topic}`, 'You are a prompt engineer. Generate creative, detailed AI prompts. Keep it under 5 lines.');
+    await reply(sock, msg, `✍️ *AI Prompt*\n\n${ans}\n\n_Developed by Anoop Dubey 🚀_`);
+  } catch {
+    await reply(sock, msg, '❌ AI unavailable.\n\n_Developed by Anoop Dubey 🚀_');
+  }
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+//  VIRAL / FLEX COMMANDS
+// ────────────────────────────────────────────────────────────────────────────
+
+addCmd('hack', async (sock, msg, args) => {
+  const target = args.join(' ') || 'Target System';
+  const jid = msg.key.remoteJid;
+  const steps = [
+    `💀 *HACK INITIATED* 💀\n\n🎯 Target: ${target}\n🔍 Scanning open ports...`,
+    `⚡ Port scan complete!\n🔓 Vulnerabilities found: 3\n📡 Attempting SSH brute force...`,
+    `🔐 SSH cracked!\n👤 User: admin | Pass: ****\n📂 Accessing root directory...`,
+    `💾 Dumping database...\n📊 Rows extracted: 48,291\n🔑 Decrypting password hashes...`,
+    `✅ *HACK COMPLETE!*\n\n🏆 Target: ${target}\n📁 Files stolen: 12,482\n🔓 Accounts cracked: 7\n\n⚠️ _This is just for fun. Hacking is illegal! 😈_\n\n_Developed by Anoop Dubey 🚀_`,
+  ];
+  for (const step of steps) {
+    await sock.sendMessage(jid, { text: step }, { quoted: msg });
+    await sleep(2000);
+  }
+});
+
+addCmd('iptrack', async (sock, msg, args) => {
+  if (!args[0]) return reply(sock, msg, '❌ Usage: .iptrack <ip>\n\n_Developed by Anoop Dubey 🚀_');
+  const ip = args[0];
+  try {
+    const res = await axios.get(`https://ipapi.co/${ip}/json/`, { timeout: 8000 });
+    const d = res.data;
+    if (d.error) return reply(sock, msg, `❌ Invalid IP: ${d.reason || 'Unknown error'}`);
+    await reply(sock, msg, `🌍 *IP TRACKER* 🌍\n\n╔══════════════════╗\n║  TARGET LOCATED  ║\n╚══════════════════╝\n\n🔹 IP: ${d.ip}\n🏳️ Country: ${d.country_name} ${d.country_code}\n🏙️ City: ${d.city}\n📍 Region: ${d.region}\n🌐 ISP: ${d.org}\n📡 Network: ${d.network || 'N/A'}\n🕐 Timezone: ${d.timezone}\n📮 Postal: ${d.postal || 'N/A'}\n📌 Coords: ${d.latitude}, ${d.longitude}\n\n_Developed by Anoop Dubey 🚀_`);
+  } catch {
+    await reply(sock, msg, '❌ Failed to track IP.\n\n_Developed by Anoop Dubey 🚀_');
+  }
+});
+
+addCmd('darkweb', async (sock, msg) => {
+  const sites = ['xmh57jrzrnw6insl.onion', 'silkroad7rn2puhj.onion', 'hss3uro2hsxfogfq.onion', 'zqktlwiuavvvqqt4.onion'];
+  const data = ['BTC Wallet: 1A2B3...8Z', 'Stolen DB: 2.1M records', 'Credit Cards: $5 each', 'Premium VPN: Free tier'];
+  const rdSite = sites[Math.floor(Math.random() * sites.length)];
+  const rdData = data[Math.floor(Math.random() * data.length)];
+  await reply(sock, msg, `🕸️ *DARK WEB SCANNER* 🕸️\n\n⚠️ Connecting to Tor network...\n🔒 Anonymizing IP...\n✅ Connected!\n\n📡 Random .onion: ${rdSite}\n💀 Found: ${rdData}\n\n⚠️ _This is fictional/for fun. Do NOT access dark web!_\n\n_Developed by Anoop Dubey 🚀_`);
+});
+
+addCmd('identity', async (sock, msg) => {
+  const firstNames = ['Alex', 'Jordan', 'Morgan', 'Taylor', 'Casey', 'Riley', 'Avery', 'Quinn'];
+  const lastNames = ['Smith', 'Johnson', 'Williams', 'Brown', 'Jones', 'Garcia', 'Miller', 'Davis'];
+  const cities = ['New York', 'London', 'Toronto', 'Sydney', 'Berlin', 'Mumbai', 'Tokyo', 'Paris'];
+  const domains = ['gmail.com', 'yahoo.com', 'outlook.com', 'proton.me'];
+  const fn = firstNames[Math.floor(Math.random() * firstNames.length)];
+  const ln = lastNames[Math.floor(Math.random() * lastNames.length)];
+  const city = cities[Math.floor(Math.random() * cities.length)];
+  const dom = domains[Math.floor(Math.random() * domains.length)];
+  const year = 1980 + Math.floor(Math.random() * 25);
+  const month = String(Math.floor(Math.random() * 12) + 1).padStart(2, '0');
+  const day = String(Math.floor(Math.random() * 28) + 1).padStart(2, '0');
+  const phone = `+1${Math.floor(Math.random() * 9000000000) + 1000000000}`;
+  await reply(sock, msg, `🎭 *FAKE IDENTITY GENERATOR*\n\n👤 Name: ${fn} ${ln}\n📧 Email: ${fn.toLowerCase()}.${ln.toLowerCase()}@${dom}\n📱 Phone: ${phone}\n🎂 DOB: ${year}-${month}-${day}\n🏙️ City: ${city}\n🔑 Password: ${fn}@${year}!\n\n⚠️ _For fun only. Do not misuse!_\n\n_Developed by Anoop Dubey 🚀_`);
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+//  SOCIAL COMMANDS
+// ────────────────────────────────────────────────────────────────────────────
+
+addCmd('githubstalk', async (sock, msg, args) => {
+  if (!args[0]) return reply(sock, msg, '❌ Usage: .githubstalk <username>\n\n_Developed by Anoop Dubey 🚀_');
+  try {
+    const [userRes, repoRes] = await Promise.all([
+      axios.get(`https://api.github.com/users/${args[0]}`, { timeout: 8000 }),
+      axios.get(`https://api.github.com/users/${args[0]}/repos?sort=updated&per_page=3`, { timeout: 8000 }),
+    ]);
+    const d = userRes.data;
+    const repos = repoRes.data.map(r => `• ${r.name} ⭐${r.stargazers_count}`).join('\n');
+    await reply(sock, msg, `🕵️ *GitHub Stalk: ${d.login}*\n\n👤 Name: ${d.name || 'N/A'}\n📝 Bio: ${d.bio || 'N/A'}\n📦 Repos: ${d.public_repos}\n👥 Followers: ${d.followers}\n➕ Following: ${d.following}\n🏢 Company: ${d.company || 'N/A'}\n📍 Location: ${d.location || 'N/A'}\n🔗 ${d.html_url}\n\n📂 *Top Repos:*\n${repos || 'None'}\n\n_Developed by Anoop Dubey 🚀_`);
+  } catch {
+    await reply(sock, msg, '❌ GitHub user not found.\n\n_Developed by Anoop Dubey 🚀_');
+  }
+});
+
+addCmd('instauser', async (sock, msg, args) => {
+  if (!args[0]) return reply(sock, msg, '❌ Usage: .instauser <username>\n\n_Developed by Anoop Dubey 🚀_');
+  await reply(sock, msg, `📸 *Instagram: @${args[0]}*\n\n🔗 Profile: instagram.com/${args[0]}\n\n⚠️ Instagram blocks API access. Open the link to view profile.\n\n_Developed by Anoop Dubey 🚀_`);
+});
+
+addCmd('website', async (sock, msg, args) => {
+  if (!args[0]) return reply(sock, msg, '❌ Usage: .website <url>\n\n_Developed by Anoop Dubey 🚀_');
+  let url = args[0];
+  if (!url.startsWith('http')) url = 'https://' + url;
+  try {
+    const res = await axios.get(url, { timeout: 10000, headers: { 'User-Agent': 'Mozilla/5.0' } });
+    const html = res.data.toString();
+    const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+    const descMatch = html.match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["']/i);
+    const title = titleMatch?.[1]?.trim() || 'N/A';
+    const desc = descMatch?.[1]?.trim() || 'N/A';
+    await reply(sock, msg, `🌐 *Website Info*\n\n🔗 URL: ${url}\n📌 Title: ${title}\n📝 Description: ${desc.slice(0, 200)}\n✅ Status: Online\n\n_Developed by Anoop Dubey 🚀_`);
+  } catch (e) {
+    await reply(sock, msg, `❌ Could not fetch website. It may be offline or blocking bots.\n\n_Developed by Anoop Dubey 🚀_`);
+  }
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+//  USEFUL COMMANDS
+// ────────────────────────────────────────────────────────────────────────────
+
+addCmd('passgen', async (sock, msg, args) => {
+  const len = Math.min(parseInt(args[0]) || 16, 64);
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()_+-=';
+  let pwd = '';
+  for (let i = 0; i < len; i++) pwd += chars[Math.floor(Math.random() * chars.length)];
+  await reply(sock, msg, `🔑 *Strong Password*\n\n\`${pwd}\`\n\nLength: ${len} chars\n💪 Strength: Very Strong\n\n_Developed by Anoop Dubey 🚀_`);
+});
+
+addCmd('username', async (sock, msg, args) => {
+  if (!args.length) return reply(sock, msg, '❌ Usage: .username <name>\n\n_Developed by Anoop Dubey 🚀_');
+  const base = args.join('').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const styles = [
+    `_${base}_`,
+    `${base}.official`,
+    `x_${base}_x`,
+    `${base}__`,
+    `${base}.real`,
+    `im.${base}`,
+    `${base}.yt`,
+    `${base}.ig`,
+    `the.${base}`,
+    `${base}.pro`,
+  ];
+  await reply(sock, msg, `✨ *Username Ideas for "${args.join(' ')}"*\n\n${styles.map(s => `• ${s}`).join('\n')}\n\n_Developed by Anoop Dubey 🚀_`);
+});
+
+addCmd('tempemail', async (sock, msg) => {
+  try {
+    const res = await axios.get('https://api.guerrillamail.com/ajax.php?f=get_email_address', { timeout: 8000 });
+    const email = res.data?.email_addr;
+    if (!email) throw new Error('No email');
+    await reply(sock, msg, `📧 *Temp Email Generated!*\n\n📬 Email: ${email}\n⏳ Expires in ~1 hour\n\n🔗 Check inbox: guerrillamail.com\n\n_Developed by Anoop Dubey 🚀_`);
+  } catch {
+    const rand = Math.random().toString(36).slice(2, 10);
+    await reply(sock, msg, `📧 *Temp Email*\n\n📬 Email: ${rand}@guerrillamailblock.com\n\n🔗 Check at: guerrillamail.com\n\n_Developed by Anoop Dubey 🚀_`);
+  }
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+//  GAME COMMANDS
+// ────────────────────────────────────────────────────────────────────────────
+
+const quizData = [
+  { q: 'What is the capital of Japan?', options: ['A) Beijing', 'B) Seoul', 'C) Tokyo', 'D) Bangkok'], ans: 'C' },
+  { q: 'What does HTML stand for?', options: ['A) Hyper Text Markup Language', 'B) High Tech Machine Language', 'C) Home Tool Markup Language', 'D) None'], ans: 'A' },
+  { q: 'How many bits in a byte?', options: ['A) 4', 'B) 8', 'C) 16', 'D) 32'], ans: 'B' },
+  { q: 'Who created Linux?', options: ['A) Bill Gates', 'B) Steve Jobs', 'C) Linus Torvalds', 'D) Mark Zuckerberg'], ans: 'C' },
+  { q: 'What is 2^10?', options: ['A) 512', 'B) 1024', 'C) 2048', 'D) 256'], ans: 'B' },
+];
+
+addCmd('quiz', async (sock, msg) => {
+  const q = quizData[Math.floor(Math.random() * quizData.length)];
+  await reply(sock, msg, `🎯 *QUIZ TIME!*\n\n❓ ${q.q}\n\n${q.options.join('\n')}\n\n||✅ Answer: ${q.ans}||\n\n_Developed by Anoop Dubey 🚀_`);
+});
+
+addCmd('mathbattle', async (sock, msg) => {
+  const ops = ['+', '-', '*'];
+  const op = ops[Math.floor(Math.random() * ops.length)];
+  const a = Math.floor(Math.random() * 50) + 1;
+  const b = Math.floor(Math.random() * 20) + 1;
+  let ans;
+  if (op === '+') ans = a + b;
+  else if (op === '-') ans = a - b;
+  else ans = a * b;
+  await reply(sock, msg, `⚡ *MATH BATTLE!*\n\n🧮 Solve: ${a} ${op} ${b} = ?\n\n⏱️ 10 seconds!\n\n||✅ Answer: ${ans}||\n\n_Developed by Anoop Dubey 🚀_`);
+});
+
+addCmd('rank', async (sock, msg) => {
+  const ranks = [
+    '😂 Rank: *NOOB* (Bottom 0.1%)',
+    '🟤 Rank: *BRONZE* (Bottom 30%)',
+    '⚪ Rank: *SILVER* (Average)',
+    '🟡 Rank: *GOLD* (Top 40%)',
+    '💎 Rank: *DIAMOND* (Top 15%)',
+    '👑 Rank: *LEGEND* (Top 5%)',
+    '🔱 Rank: *GOD TIER* (Top 0.1%)',
+  ];
+  const rank = ranks[Math.floor(Math.random() * ranks.length)];
+  await reply(sock, msg, `🏆 *RANK SYSTEM*\n\n${rank}\n\n_Developed by Anoop Dubey 🚀_`);
+});
+
+// ────────────────────────────────────────────────────────────────────────────
 //  UTILS
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -983,18 +1319,47 @@ function formatUptime(seconds) {
 async function handleMessage(sock, msg) {
   try {
     if (!msg.message) return;
-    // fromMe = owner sending from their own phone, always allow
-
-    const text = getMsgText(msg).trim();
-    if (!text.startsWith(config.prefix || '.')) return;
+    if (msg.key.fromMe) return; // ignore bot's own messages
 
     const jid = msg.key.remoteJid;
-    const sender = msg.key.participant || jid;
-    const body = text.slice((config.prefix || '.').length).trim();
+    if (!jid) return;
+
+    // ── Proper sender for both DM and Group ─────────────────────────────────
+    // In groups: key.participant holds the sender's JID
+    // In DMs: key.remoteJid is the sender
+    const isGroup = jid.endsWith('@g.us');
+    const sender = (isGroup ? msg.key.participant : msg.key.remoteJid) || msg.key.remoteJid;
+
+    const text = getMsgText(msg).trim();
+    if (!text) return;
+
+    const prefix = config.prefix || '.';
+
+    // ── AUTO-REPLY AI LOGIC ──────────────────────────────────────────────────
+    if (!text.startsWith(prefix) && autoReplyUsers.has(sender)) {
+      const now = Date.now();
+      const lastReply = autoReplyCooldowns.get(sender) || 0;
+      if (now - lastReply > AUTO_REPLY_COOLDOWN) {
+        autoReplyCooldowns.set(sender, now);
+        try {
+          await typingDelay(sock, jid, 1000);
+          const aiReply = await askGroq(text, 'You are a friendly WhatsApp chat companion. Reply naturally in 1-3 short lines. Be casual and fun. Match the language of the user.');
+          await sock.sendMessage(jid, { text: aiReply }, { quoted: msg });
+        } catch (e) {
+          log('ERROR', `auto-reply AI: ${e.message}`);
+        }
+      }
+      return;
+    }
+
+    if (!text.startsWith(prefix)) return;
+
+    const body = text.slice(prefix.length).trim();
+    if (!body) return;
     const [cmd, ...args] = body.split(' ');
     const command = cmd.toLowerCase();
 
-    log('INFO', `[MSG] ${sender} → .${command}`);
+    log('INFO', `[${isGroup ? 'GROUP' : 'DM'}] ${sender} → .${command}`);
 
     // Rate limit
     if (isRateLimited(sender)) {
